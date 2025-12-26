@@ -1,2 +1,13 @@
-# SOSS_scraping
-Automated web scraping tool for Ergo Hestia insurance claims portal. Built with Python and Selenium. Features include automated Microsoft SSO login, dynamic date-range processing with JSON state persistence, and multi-select status filtering.
+# SOSS_scraping 🚀
+
+Automatyzacja procesów ekstrakcji danych z portalu obsługi spraw sądowych.
+
+## Funkcje
+- 🔐 Automatyczne logowanie przez Microsoft SSO.
+- 📅 Obsługa zakresów dat z automatycznym przeskokiem o 1 dzień.
+- 💾 Zapis stanu w JSON (nie pobiera dwa razy tych samych danych).
+- ⚙️ Dynamiczne wybieranie wielu statusów spraw w komponentach Angular/Ant Design.
+
+## Technologia
+- Python 3.1
+- Selenium WebDriver
