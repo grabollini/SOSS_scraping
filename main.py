@@ -1,36 +1,45 @@
-from datetime import datetime
-from datetime import timedelta
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import Select
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
-from dotenv import load_dotenv
 import json
 import os
 import time
+from datetime import datetime
+from datetime import timedelta
+
+from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 STATE_FILE = "processed_dates.json"
 load_dotenv()
-driver_path = os.getenv("CHROME_DRIVER_PATH")
-secret_password = os.getenv('PASSWORD')
+DRIVER_PATH = os.getenv("CHROME_DRIVER_PATH")
+SECRET_PASSWORD = os.getenv('PASSWORD')
+USER_DATA = os.getenv('USER_DATA_DIR')
+
+os.system("taskkill /F /IM chrome.exe /T >nul 2>&1")
+os.system("taskkill /F /IM chromedriver.exe /T >nul 2>&1")
 
 chrome_options = Options()
+chrome_options.add_argument(f"--user-data-dir={USER_DATA}")
+chrome_options.add_argument("--profile-directory=Default")
+# these 3 flags often solve the DevToolsActivePort problem:
+chrome_options.add_argument("--remote-debugging-port=9222") # opens a port for communication
+chrome_options.add_argument("--no-sandbox")                # disables sandboxing (often required for profiles)
+chrome_options.add_argument("--disable-dev-shm-usage")     # rrevents shared memory problems
 chrome_options.add_argument("--start-maximized")
 chrome_options.add_experimental_option("detach", True) # Selenium don't close the Chrome browser when the script finishes
-# options.headless = True  # Enable headless mode
+chrome_options.add_argument("--disable-session-crashed-bubble")
+# chrome_options.add_argument("--headless=new")  # Enable headless mode
 
-service = Service(driver_path)
+service = Service(DRIVER_PATH)
 driver = webdriver.Chrome(service=service, options=chrome_options)
 url = os.getenv('SOSS_URL')
 driver.get(url)
 wait = WebDriverWait(driver, 15)
 
-"""start logging in"""
+"""START OF LOGINING"""
 
 try:
     WebDriverWait(driver, 10).until(
@@ -40,22 +49,32 @@ except:
     print("Nie znaleziono elementu w czasie oczekiwania.")
 
 time.sleep(2)
-driver.find_element(By.CSS_SELECTOR, ".cky-btn.cky-btn-accept").click()
+# driver.find_element(By.CSS_SELECTOR, ".cky-btn.cky-btn-accept").click()
 driver.find_element(By.XPATH, '//*[@id="signInName"]').send_keys('karol.grabiec@ergohestia.pl')
 driver.find_element(By.ID, 'continue').click()
-wait.until(EC.presence_of_element_located((By.ID, "i0116"))).send_keys('karol.grabiec@ergohestia.pl')
-
 try:
-    button = wait.until(EC.presence_of_element_located((By.ID, "idSIButton9")))
-    driver.execute_script("arguments[0].click();", button)
-except TimeoutException:
-    print("Przycisk 'Tak' nie pojawił się w zadanym czasie.")
+    login_input = WebDriverWait(driver, 5).until(
+        EC.presence_of_element_located((By.ID, "i0116")))
 
-wait.until(EC.presence_of_element_located((By.ID, "passwordInput"))).send_keys(secret_password)
-driver.find_element(By.ID, 'submitButton').click()
-wait.until(EC.element_to_be_clickable((By.ID, "idSIButton9"))).click()
+    if login_field:
+        print("🔐 Bot nie jest zalogowany. Rozpoczynam procedurę logowania...")
+        login_input.send_keys('karol.grabiec@ergohestia.pl')
+        try:
+            button = wait.until(EC.presence_of_element_located((By.ID, "idSIButton9")))
+            driver.execute_script("arguments[0].click();", button)
+        except TimeoutException:
+            print("Przycisk 'Tak' nie pojawił się w zadanym czasie.")
 
-"""end of login"""
+        wait.until(EC.presence_of_element_located((By.ID, "passwordInput"))).send_keys(SECRET_PASSWORD)
+        driver.find_element(By.ID, 'submitButton').click()
+        wait.until(EC.element_to_be_clickable((By.ID, "idSIButton9"))).click()
+    else:
+        print("✅ Sesja aktywna. Pomijam logowanie.")
+
+except Exception as e:
+    print("✅ Zalogowano (brak pól logowania).")
+
+"""END OF LOGINING"""
 
 wait.until(EC.element_to_be_clickable((By.XPATH, '//span[contains(text(), "Wyszukaj sprawę")]'))).click()
 time.sleep(3)
@@ -72,8 +91,8 @@ except:
 status_select = wait.until(EC.element_to_be_clickable(
     (By.CSS_SELECTOR, "nz-select-top-control.ant-select-selector")))
 status_select.click()
-status_option_xpath = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Zamknięta']"
 
+status_option_xpath = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Zamknięta']"
 try:
     option = wait.until(EC.visibility_of_element_located((By.XPATH, status_option_xpath)))
     option.click()
@@ -85,8 +104,8 @@ element_confirm = driver.find_element(By.XPATH, "//span[normalize-space()='Zasto
 driver.execute_script("arguments[0].click();", element_confirm)
 filter_trigger = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='Dodaj filtr']")))
 filter_trigger.click()
-option_xpath = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Data wpływu do EH']"
 
+option_xpath = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Data wpływu do EH']"
 try:
     option = wait.until(EC.visibility_of_element_located((By.XPATH, option_xpath)))
     option.click()
@@ -110,8 +129,8 @@ def get_date(message):
             print(f"Nieprawidłowy format lub data: {data_str}. Spróbuj ponownie.")
 
 # calculating all days in a range
-start_datetime = get_date("Podaj datę początkową wpływu (rrrr-mm-dd): ")
-end_datetime = get_date("Podaj datę końcową wpływu (rrrr-mm-dd): ")
+start_datetime = get_date("❗ Podaj datę początkową wpływu do EH (rrrr-mm-dd): ")
+end_datetime = get_date("❗ Podaj datę końcową wpływu do EH (rrrr-mm-dd): ")
 
 while start_datetime <= end_datetime:
     data_str = start_datetime.strftime('%Y-%m-%d')
@@ -136,12 +155,14 @@ while start_datetime <= end_datetime:
         start_datetime = start_datetime + timedelta(days=1)
         continue
 
+    """scraping data from the case cards with specific case status"""
+
     wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".ocsg-dynamic-filters__input"))).click()
     filter_trigger = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='Dodaj filtr']")))
     filter_trigger.click()
-    option_xpath_case_status = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Status sprawy']"
 
     try:
+        option_xpath_case_status = "//div[contains(@class, 'ant-select-item-option-content') and normalize-space()='Status sprawy']"
         option = wait.until(EC.visibility_of_element_located((By.XPATH, option_xpath_case_status)))
         option.click()
     except:
@@ -151,8 +172,10 @@ while start_datetime <= end_datetime:
     wait.until(EC.element_to_be_clickable((By.ID, "status-sprawy-1-ctrl"))).click()
     status_ids = {
         "Realizacja wyroku - po I instancji": "status-sprawy-1-SENTENCE_REALIZATION_FIRST_INSTANCE",
-        "Zakończona - bez wnoszenia apelacj": "status-sprawy-1-CLOSED_WITHOUT_APPEAL",
-        "Realizacja wyroku - po II instancji": "status-sprawy-1-SENTENCE_REALIZATION_SECOND_INSTANCE"
+        "Realizacja wyroku - po II instancji": "status-sprawy-1-SENTENCE_REALIZATION_SECOND_INSTANCE",
+        "Zakończona - oddalenie powództwa": "status-sprawy-1-CLOSED_CLAIM_DISMISSED",
+        "Zakończona - bez wnoszenia apelacji": "status-sprawy-1-CLOSED_WITHOUT_APPEAL",
+        "Zakończona - brak ochrony": "status-sprawy-1-CLOSED_NO_COVERAGE"
     }
     for k, _id in status_ids.items():
         try:
@@ -168,49 +191,74 @@ while start_datetime <= end_datetime:
     case_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/view']")
     case_urls = [el.get_attribute("href") for el in case_elements]
     print(f"Znaleziono spraw: {len(case_urls)}")
-
+    time.sleep(20)
     # check and write received dates
     if data_str not in processed_dates:
         processed_dates.add(data_str)
         with open(STATE_FILE, 'w') as f:
             json.dump(list(processed_dates), f)
-
+    print(f"\n📆 Sprawdzana data: {start_datetime}\n")
     start_datetime = start_datetime + timedelta(days=1)
-    print(start_datetime)
 
 for url in case_urls:
     print(f"Wchodzę do sprawy: {url}")
     driver.get(url)
-    SELECTOR_DAMAGE = "ocsg-output[label*='DAMAGE_NUMBER'] p"
+
     try:
-        case_damage_number_el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, SELECTOR_DAMAGE))).text.strip()
-        print(f"Pobrano numer/numery spraw: {case_damage_number_el}")
+        status_element = wait.until(EC.visibility_of_element_located(
+            (By.CSS_SELECTOR, "nz-tag.ant-tag-error")))
+        status_text = status_element.text.strip()
+        status_text = status_text.replace("Status: ", "")
+        print(f"📋 Status sprawy: {status_text}")
+
+    except Exception as e:
+        print(f"❌ Nie udało się pobrać statusu: {e}")
+
+    try:
+        selector_damage = "ocsg-output[label*='DAMAGE_NUMBER'] p"
+        case_damage_number_el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, selector_damage))).text.strip()
+        print(f"🆔 Numer/numery spraw: {case_damage_number_el}")
     except:
         case_damage_number_el = "Nie znaleziono"
 
-    signature_selector = "ocsg-output[label='CCM.CASE.COURT_FILE_REFERENCE'] p"
     try:
+        wps_selector = "ocsg-output[label='CCM.CASE.TOTAL_CASE_VALUE'] .ocsg-output__value"
+        wps_element = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, wps_selector)))
+        wps_value = wps_element.text.strip()
+        print(f"💰 WPS (łączny): {wps_value}")
+    except Exception as e:
+        print(f"⚠️Nie udało się pobrać wartości WPS: {e}")
+
+    try:
+        signature_selector = "ocsg-output[label='CCM.CASE.COURT_FILE_REFERENCE'] p"
         signature_el = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, signature_selector))).text.strip()
-        print(f"Pobrano sygnaturę: {signature_el}")
+        print(f"📜 Sygnatura akt: {signature_el}")
     except:
         signature_el = "Nie znaleziono"
 
     try:
-        xpath_grup = "//div[contains(text(), 'Grupa ubezpieczeń')]/following-sibling::div//p"
-
-        grupa_el = wait.until(EC.visibility_of_element_located((By.XPATH, xpath_grup)))
-        grup_text = grupa_el.text.strip()
-
-        # if the text is empty (for example it is in the tooltip), get the innerText via JS
-        if not grup_text:
-            grup_text = driver.execute_script("return arguments[0].innerText;", grupa_el).strip()
-        print(f"🔎 Odczytana Grupa Ubezpieczeń: {grup_text}")
+        table_xpath = "//table[thead//th[contains(text(), 'Grupa ubezpieczeń')]]"
+        row_xpath = f"{table_xpath}/tbody/tr[1]"
+        row = wait.until(EC.visibility_of_element_located((By.XPATH, row_xpath)))
+        cols = row.find_elements(By.TAG_NAME, "td")
+        if len(cols) >= 4:
+            grupa_ubezpieczen = cols[0].text.strip()
+            rodzaj_roszczenia = cols[1].text.strip()
+            kwota_zasadzona = cols[3].text.strip()
+            print(f"✅ Grupa ubezpieczeń: {grupa_ubezpieczen}")
+            print(f"✅ Rodzaj roszczenia: {rodzaj_roszczenia}")
+            print(f"✅ Kwota zasądzona: {kwota_zasadzona}")
+        elif len(cols) >= 2: # security if the table has only 2-3 columns
+            print(f"✅ Grupa ubezpieczeń: {cols[0].text.strip()}")
+            print(f"✅ Rodzaj roszczenia: {cols[1].text.strip()}")
+            print("ℹ️Brak kwoty zasądzenia.")
+        else:
+            print("⚠️Tabela znaleziona, ale jest zbyt krótka.")
 
     except Exception as e:
-        print(f"⚠️ Nie udało się odczytać pola Grupa ubezpieczeń: {e}")
+        print(f"❌ Błąd podczas pobierania danych z tabeli: {e}")
 
     rows = driver.find_elements(By.CSS_SELECTOR, "app-case-documents table tbody tr")
-
     for row in rows:
         try:
             # get all cells in a row and skip those that don't have enough cells
@@ -234,9 +282,49 @@ for url in case_urls:
                 time.sleep(5)
 
         except Exception as e:
-            print(f"⚠️ Nie udało się pobrać dokumentu: {e}")
+            print(f"⚠️Nie udało się pobrać dokumentu: {e}")
             continue
 
+    try:
+        court_1_inst = wait.until(EC.visibility_of_element_located(
+            (By.CSS_SELECTOR, "ocsg-output[label*='COURT_OF_FIRST_INSTANCE'] .ocsg-output__value")
+        )).text.strip()
+        court_2_inst = wait.until(EC.visibility_of_element_located(
+            (By.CSS_SELECTOR, "ocsg-output[label*='COURT_OF_SECOND_INSTANCE'] .ocsg-output__value")
+        )).text.strip()
 
-    time.sleep(5)
+        print(f"🏛️ Sąd I instancji: {court_1_inst}")
+        print(f"🏛️ Sąd II instancji: {court_2_inst}")
+
+    except Exception as e:
+        print(f"⚠️Nie udało się pobrać danych o sądach: {e}")
+
+    if court_2_inst is None and category == "Wyrok I instancji z uzasadnieniem":
+        court_verdict = court_1_inst
+    elif court_2_inst is not None and category == "Wyrok II instancji z uzasadnieniem":
+        court_verdict = court_2_inst
+    else:
+        court_verdict = court_1_inst
+    print(f"⚖️Wyrok wydany przez: {court_verdict}")
+
+    if kwota_zasadzona == "-" or kwota_zasadzona == "ℹ️Brak kwoty zasądzenia.":
+        kwota_zasadzona = 0
+    else:
+        kwota_zasadzona = kwota_zasadzona.replace(" PLN", "").replace(" ", "").replace(",", ".")
+        kwota_zasadzona = float(kwota_zasadzona)
+
+    kwota_wps_clean = wps_value.replace(" PLN", "").replace(" ", "").replace(",", ".")
+    wps_value = float(kwota_wps_clean)
+    if status_text in ["Zakończona - oddalenie powództwa", "Zakończona - brak ochrony"]:
+        wynik_wyroku = "Oddalenie"
+    elif status_text in ["Realizacja wyroku - po I instancji", "Realizacja wyroku - po II instancji", "Zakończona - bez wnoszenia apelacji"] and wps_value > kwota_zasadzona:
+        wynik_wyroku = "Uwzględnienie w części"
+    elif status_text in ["Realizacja wyroku - po I instancji", "Realizacja wyroku - po II instancji", "Zakończona - bez wnoszenia apelacji"] and wps_value <= kwota_zasadzona:
+        wynik_wyroku = "Uwzględnienie w całości"
+    else:
+        wynik_wyroku = "Brak danych do określenia wyniku wyroku"
+    print(f"🏆 Wynik wyroku: {wynik_wyroku}")
+
+    print(f"\n{'=' * 20} KONIEC SPRAWY {'=' * 20}\n")
+    time.sleep(2)
 time.sleep(10)
