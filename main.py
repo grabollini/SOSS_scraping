@@ -29,33 +29,14 @@ DOWNLOAD_DIR = os.getenv('NEW_DOWNLOAD_DIR')
 all_cases = []
 site_url = os.getenv("SHAREPOINT_LIST_URL")
 list_name = "BAZA WYROKÓW PDF"
+files_before = set(os.listdir(DOWNLOAD_DIR))
+
+
 
 os.system("taskkill /F /IM chrome.exe /T >nul 2>&1")
 os.system("taskkill /F /IM chromedriver.exe /T >nul 2>&1")
 
-
-def setup_driver():
-    print("\n" + "=" * 30)
-    print("🤖 SOSS BOT - WYBÓR TRYBU")
-    print("=" * 30)
-    print("1. Nowa instancja (Kopia profilu)")
-    print("2. Podłączenie do istniejącej instancji (Port 9222)")
-    print("=" * 30)
-
-    choice = input("Wybierz opcję (1/2): ")
-
-    chrome_options = Options()
-    service = Service(executable_path=DRIVER_PATH)  # Używamy Twojej stałej ścieżki
-
-    if choice == '1':
-        print("\n🚀 Uruchamiam nową sesję z Twoimi ustawieniami...")
-
-        # Twoje czyszczenie procesów przed startem
-        os.system("taskkill /F /IM chrome.exe /T >nul 2>&1")
-        os.system("taskkill /F /IM chromedriver.exe /T >nul 2>&1")
-
-        # Twoje preferencje pobierania
-        prefs = {
+prefs = {
             "download.default_directory": DOWNLOAD_DIR,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
@@ -63,48 +44,6 @@ def setup_driver():
             "profile.exit_type": "Normal",
             "profile.exited_cleanly": True
         }
-
-        # Twoja pełna lista flag
-        chrome_options.add_argument(f"--user-data-dir={USER_DATA}")
-        chrome_options.add_argument("--profile-directory=Default")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--remote-debugging-port=9222")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--disable-session-crashed-bubble")
-
-        chrome_options.add_experimental_option("detach", True)
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_experimental_option("prefs", prefs)
-
-    elif choice == '2':
-        print("\n🔗 Próbuję przejąć kontrolę nad otwartym Chrome...")
-        # W tym trybie łączymy się tylko po adresie debuggera
-        chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
-
-    else:
-        print("❌ Nieprawidłowy wybór. Zamykam.")
-        sys.exit()
-
-    try:
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        return driver
-    except Exception as e:
-        print(f"\n❌ BŁĄD STARTU: {e}")
-        if choice == '2':
-            print("\nUpewnij się, że Chrome został uruchomiony z flagą --remote-debugging-port=9222")
-        sys.exit()
-
-prefs = {
-    "download.default_directory": DOWNLOAD_DIR,
-    "download.prompt_for_download": False,
-    "download.directory_upgrade": True,
-    "safebrowsing.enabled": True,
-    "profile.exit_type": "Normal",
-    "profile.exited_cleanly": True
-}
 
 chrome_options = Options()
 chrome_options.add_argument(f"--user-data-dir={USER_DATA}")
@@ -128,6 +67,88 @@ url = os.getenv('SOSS_URL')
 driver.get(url)
 wait = WebDriverWait(driver, 5)
 driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})") # cleans up bot traces in JS after starting the driver
+
+
+def clean_download_directory(directory_path):
+    """
+    Usuwa całą zawartość wskazanego folderu (pliki i podfoldery).
+    Sam folder zostaje zachowany.
+    """
+    if not os.path.exists(directory_path):
+        print(f"📂 Folder {directory_path} nie istnieje. Tworzę go...")
+        os.makedirs(directory_path)
+        return
+
+    print(f"🧹 Czyszczenie folderu: {directory_path}")
+
+    for filename in os.listdir(directory_path):
+        file_path = os.path.join(directory_path, filename)
+        try:
+            # Sprawdź czy to plik lub link symboliczny i usuń
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            # Jeśli to folder, usuń go wraz z zawartością
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print(f"⚠️ Nie udało się usunąć {file_path}. Powód: {e}")
+
+def get_date(message):
+    while True:
+        try:
+            data_str = input(message)
+            # Validation of date format and existence (e.g. whether January 32nd is not present)
+            data_obj = datetime.strptime(data_str, '%Y-%m-%d')
+            # length check
+            if len(data_str) != 10:
+                print("Błąd: Data musi mieć dokładnie 10 znaków")
+                continue
+
+            return data_obj  # return the datetime object if everything is fine
+        except ValueError:
+            print(f"Nieprawidłowy format lub data, spróbuj ponownie.")
+
+# calculating all days in a range
+start_datetime = get_date("❗ Podaj datę początkową wpływu do EH (rrrr-mm-dd): ")
+end_datetime = get_date("❗ Podaj datę końcową wpływu do EH (rrrr-mm-dd): ")
+
+
+def process_file_to_pdf(file_path):
+    ext = os.path.splitext(file_path)[1].lower()
+    pdf_path = os.path.splitext(file_path)[0] + ".pdf"
+
+    if ext == ".pdf":
+        return file_path
+
+    try:
+        # Image format group (TIFF, JPG, PNG)
+        if ext in [".tiff", ".tif", ".jpg", ".jpeg", ".png"]:
+            print(f"🖼️ Konwertuję obraz {ext} na PDF...")
+
+            with Image.open(file_path) as img:
+                # --- DOWNLOAD VERIFICATION ---
+                img.verify()  # Whether it is damage
+                img = Image.open(file_path) # Open again to close file
+                # ----------------------------
+
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                img.save(pdf_path, "PDF", resolution=300.0, save_all=True) # save_all=True is important for multi-page TIFF
+
+            os.remove(file_path)
+            return pdf_path
+
+        elif ext == ".docx":
+            print(f"📄 Konwertuję Word na PDF...")
+            convert(file_path, pdf_path)
+            os.remove(file_path)
+            return pdf_path
+
+    except Exception as e:
+        print(f"❌ Błąd konwersji pliku {ext}: {e}")
+        return file_path
+
 
 """START OF LOGINING"""
 
@@ -203,53 +224,9 @@ except:
     option = driver.find_element(By.XPATH, option_xpath)
     driver.execute_script("arguments[0].click();", option)
 
-def get_date(message):
-    while True:
-        try:
-            data_str = input(message)
-            # Validation of date format and existence (e.g. whether January 32nd is not present)
-            data_obj = datetime.strptime(data_str, '%Y-%m-%d')
-            # length check
-            if len(data_str) != 10:
-                print("Błąd: Data musi mieć dokładnie 10 znaków")
-                continue
-
-            return data_obj  # return the datetime object if everything is fine
-        except ValueError:
-            print(f"Nieprawidłowy format lub data: {data_str}. Spróbuj ponownie.")
-
-# calculating all days in a range
-start_datetime = get_date("❗ Podaj datę początkową wpływu do EH (rrrr-mm-dd): ")
-end_datetime = get_date("❗ Podaj datę końcową wpływu do EH (rrrr-mm-dd): ")
-
-
-def process_file_to_pdf(file_path):  # Converts file to PDF depending on extension.
-    ext = os.path.splitext(file_path)[1].lower()
-    pdf_path = os.path.splitext(file_path)[0] + ".pdf"
-
-    if ext == ".pdf":
-        return file_path
-
-    try:
-        if ext in [".tiff", ".tif"]:
-            print(f"🖼️ Konwertuję TIFF na PDF...")
-            img = Image.open(file_path)
-            if img.mode != 'RGB':  # Conversion to RGB - required for PDF and multi-page support
-                img = img.convert('RGB')
-            img.save(pdf_path, "PDF", resolution=300.0, save_all=True)
-            os.remove(file_path)  # Delete the original
-            return pdf_path
-
-        elif ext == ".docx":
-            print(f"📄 Konwertuję Word na PDF...")
-            convert(file_path, pdf_path)
-            os.remove(file_path)  # Remove the original
-            return pdf_path
-    except Exception as e:
-        print(f"❌ Błąd konwersji pliku {ext}: {e}")
-        return file_path
 
 while start_datetime <= end_datetime:
+    clean_download_directory(DOWNLOAD_DIR)
     data_str = start_datetime.strftime('%Y-%m-%d')
     # load received dates
     if os.path.exists(STATE_FILE):
@@ -322,9 +299,10 @@ while start_datetime <= end_datetime:
         except Exception as final_e:
             print(f"💀 Nie udało się kliknąć przycisku: {final_e}")
 
-    time.sleep(5)
+    time.sleep(10)
     case_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/view']")
     raw_urls = [el.get_attribute("href") for el in case_elements]
+    global case_urls
     case_urls = [url for url in set(raw_urls) if url and "http" in url]
     print(f"📊 Raport wyszukiwania:")
     print(f"   - Wszystkie znalezione elementy: {len(case_elements)}")
@@ -351,7 +329,7 @@ for url in case_urls:
     driver.get(url)
 
     try:
-        case_id = wait.until(EC.visibility_of_element_located((By.ID, "mainHeadingId"))).text.strip()
+        case_id = wait.until(EC.visibility_of_element_located((By.ID, "mainHeadingId"))).text.strip().replace("Sprawa ", "")
         print(f"🆔 ID sprawy: {case_id}")
     except Exception as e:
         print(f"❌ Nie udało się pobrać ID: {e}")
@@ -426,7 +404,6 @@ for url in case_urls:
 
             if "z uzasadnieniem" in category.lower():
                 print(f"✅ Znaleziono: {category}")
-                global files_before
                 files_before = set(os.listdir(DOWNLOAD_DIR))
                 expand_icon = cells[0].find_element(By.CSS_SELECTOR, "button.ant-table-row-expand-icon")
                 driver.execute_script("arguments[0].click();", expand_icon)
@@ -436,11 +413,41 @@ for url in case_urls:
                     "arguments[0].dispatchEvent(new MouseEvent('click', {view: window, bubbles: true, cancelable: true}));",
                     download_icon) # send a 'click' event instead of calling the .click() function
                 print("💾 Ikona pobierania kliknięta!")
-                time.sleep(10)
+                time.sleep(3)
 
         except Exception as e:
             print(f"⚠️Nie udało się pobrać dokumentu: {e}")
             continue
+
+    try:
+        new_file_path = None
+        for _ in range(15):
+            # time.sleep(1)
+            files_after = set(os.listdir(DOWNLOAD_DIR))
+            new_files = files_after - files_before
+            valid_files = [f for f in new_files if not f.endswith(('.tmp', '.crdownload'))]  # file filtration
+
+            if valid_files:
+                print(f"✅ Znaleziono nowe pliki: {valid_files}")
+                for original_filename in valid_files:
+                    original_name_base = os.path.splitext(original_filename)[0]
+                    original_name_base = original_name_base.replace(" ", "_").replace(".", "_")
+                    old_path = os.path.join(DOWNLOAD_DIR, original_filename)
+
+                    # Changing the name to a unique one (keeping the original extension)
+                    extension = os.path.splitext(original_filename)[1]
+                    safe_case_id = case_id.replace("/", "_").replace("\\", "_").replace(":", "_").replace(" ", "_")
+                    temp_case_path = os.path.join(DOWNLOAD_DIR, safe_case_id + original_name_base + extension)
+                    os.rename(old_path, temp_case_path)
+
+                    # Converting to PDF
+                    new_file_path = process_file_to_pdf(temp_case_path)
+                    print(f"✅ Plik po zmainie nazwy gotowy: {os.path.basename(new_file_path)}")
+                break
+
+    except Exception as e:
+        print(f"⚠️ Błąd w procesie pliku: {e}")
+
     try:
         court_1_inst = wait.until(EC.visibility_of_element_located(
             (By.CSS_SELECTOR, "ocsg-output[label*='COURT_OF_FIRST_INSTANCE'] .ocsg-output__value")
@@ -454,31 +461,6 @@ for url in case_urls:
 
     except Exception as e:
         print(f"⚠️Nie udało się pobrać danych o sądach: {e}")
-
-    try:
-        new_file_path = None
-        for _ in range(15):
-            time.sleep(1)
-            files_after = set(os.listdir(DOWNLOAD_DIR))
-            new_files = files_after - files_before
-            valid_files = [f for f in new_files if not f.endswith(('.tmp', '.crdownload'))]  # file filtration
-
-            if valid_files:
-                original_name = valid_files[0]
-                old_path = os.path.join(DOWNLOAD_DIR, original_name)
-
-                # Changing the name to a unique one (keeping the original extension)
-                extension = os.path.splitext(original_name)[1]
-                temp_case_path = os.path.join(DOWNLOAD_DIR, f"Case_{case_id}{extension}")
-                os.rename(old_path, temp_case_path)
-
-                # Converting to PDF
-                final_pdf_path = process_file_to_pdf(temp_case_path)
-                print(f"✅ Plik gotowy: {os.path.basename(final_pdf_path)}")
-                break
-
-    except Exception as e:
-        print(f"⚠️ Błąd w procesie pliku: {e}")
 
     if court_2_inst is None and category == "Wyrok I instancji z uzasadnieniem":
         court_verdict = court_1_inst
