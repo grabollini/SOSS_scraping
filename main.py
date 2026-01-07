@@ -1,23 +1,23 @@
+import easyocr
+import faiss
+import pymupdf as fitz
 import json
-import logging
+import numpy as np
 import os
-import sys
 import time
 from datetime import datetime
 from datetime import timedelta
 
+import comtypes.client
+from PIL import Image
 from dotenv import load_dotenv
 from selenium import webdriver
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from office365.runtime.auth.user_credential import UserCredential
-from office365.sharepoint.client_context import ClientContext
-from PIL import Image
-from docx2pdf import convert
+from sentence_transformers import SentenceTransformer, util
 
 STATE_FILE = "processed_dates.json"
 load_dotenv()
@@ -26,12 +26,24 @@ SECRET_PASSWORD = os.getenv('PASSWORD')
 SECRET_LOGIN = os.getenv("LOGIN_MAIL")
 USER_DATA = os.getenv('USER_DATA_DIR')
 DOWNLOAD_DIR = os.getenv('NEW_DOWNLOAD_DIR')
-all_cases = []
 site_url = os.getenv("SHAREPOINT_LIST_URL")
 list_name = "BAZA WYROKÓW PDF"
 files_before = set(os.listdir(DOWNLOAD_DIR))
+MODEL_PATH = r'C:\Model\all-MiniLM-L6-v2'
+INDEX_FILE = 'faiss_index.bin'
+MAPPING_FILE = 'faiss_mapping_ids.npy'
+EASYOCR_READER = None
+reader = easyocr.Reader(['pl', 'en'], gpu=False)
 
+GLOBAL_MODEL = None
+GLOBAL_FAISS_INDEX = None
+GLOBAL_MAPPING_IDS = None
+all_cases = []
+case_urls = []
 
+# Setting up offline mode for supporting libraries. SentenceTransformer model downloaded manually.
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_DATASETS_OFFLINE'] = '1'
 
 os.system("taskkill /F /IM chrome.exe /T >nul 2>&1")
 os.system("taskkill /F /IM chromedriver.exe /T >nul 2>&1")
@@ -58,7 +70,7 @@ chrome_options.add_experimental_option("detach", True) # Selenium don't close th
 chrome_options.add_argument("--disable-session-crashed-bubble")
 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])# disabling the toolbar "Chrome is controlled by automatic software"
 chrome_options.add_experimental_option('useAutomationExtension', False) # blocks the automation extension
-# chrome_options.add_argument("--headless=new")  # Enable headless mode
+chrome_options.add_argument("--headless=new")  # Enable headless mode
 chrome_options.add_experimental_option("prefs", prefs)
 
 service = Service(DRIVER_PATH)
@@ -139,9 +151,31 @@ def process_file_to_pdf(file_path):
             os.remove(file_path)
             return pdf_path
 
-        elif ext == ".docx":
+        elif ext in [".docx", ".doc"]:
+            time.sleep(5)
             print(f"📄 Konwertuję Word na PDF...")
-            convert(file_path, pdf_path)
+            print(f"Ścieżka pliku Word: {file_path}")
+            print('Jestem przed konwersją Word')
+            abs_file_path = os.path.abspath(file_path)
+            abs_pdf_path = os.path.abspath(pdf_path)
+            word = None
+            doc = None
+            try:
+                word = comtypes.client.CreateObject('Word.Application') # Run Word in the background
+                word.Visible = False
+                doc = word.Documents.Open(abs_file_path)
+                doc.SaveAs(abs_pdf_path, FileFormat=17)
+                print('✅ Konwersja zakończona sukcesem')
+
+            except Exception as e:
+                print(f"❌ Błąd konwersji Word: {e}")
+                raise e
+            finally:
+                if doc:
+                    doc.Close()
+                if word:
+                    word.Quit()
+
             os.remove(file_path)
             return pdf_path
 
@@ -302,7 +336,6 @@ while start_datetime <= end_datetime:
     time.sleep(10)
     case_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/view']")
     raw_urls = [el.get_attribute("href") for el in case_elements]
-    global case_urls
     case_urls = [url for url in set(raw_urls) if url and "http" in url]
     print(f"📊 Raport wyszukiwania:")
     print(f"   - Wszystkie znalezione elementy: {len(case_elements)}")
@@ -392,6 +425,7 @@ for url in case_urls:
         print(f"❌ Błąd podczas pobierania danych z tabeli: {e}")
 
     rows = driver.find_elements(By.CSS_SELECTOR, "app-case-documents table tbody tr")
+
     for row in rows:
         try:
             # get all cells in a row and skip those that don't have enough cells
@@ -404,7 +438,6 @@ for url in case_urls:
 
             if "z uzasadnieniem" in category.lower():
                 print(f"✅ Znaleziono: {category}")
-                files_before = set(os.listdir(DOWNLOAD_DIR))
                 expand_icon = cells[0].find_element(By.CSS_SELECTOR, "button.ant-table-row-expand-icon")
                 driver.execute_script("arguments[0].click();", expand_icon)
                 print("➕ Rozwinięto szczegóły wiersza.")
@@ -421,9 +454,12 @@ for url in case_urls:
 
     try:
         new_file_path = None
-        for _ in range(15):
-            # time.sleep(1)
+        for _ in range(3):
+            time.sleep(1)
+            print('Jestem w for _ in range')
             files_after = set(os.listdir(DOWNLOAD_DIR))
+            print(f'After {files_after}')
+            print(f'Before {files_before}')
             new_files = files_after - files_before
             valid_files = [f for f in new_files if not f.endswith(('.tmp', '.crdownload'))]  # file filtration
 
@@ -441,10 +477,15 @@ for url in case_urls:
                     os.rename(old_path, temp_case_path)
 
                     # Converting to PDF
+                    print('Jestem przed wywołaniem funkcji')
                     new_file_path = process_file_to_pdf(temp_case_path)
+                    print('Jestem przed dodaniem do files_before')
+                    files_before.add(os.path.basename(new_file_path))
+                    print('Jestem po dodaniu do files_before')
                     print(f"✅ Plik po zmainie nazwy gotowy: {os.path.basename(new_file_path)}")
+                    print(f"Nowa nazwa: {temp_case_path}")
                 break
-
+        time.sleep(5)
     except Exception as e:
         print(f"⚠️ Błąd w procesie pliku: {e}")
 
@@ -508,7 +549,117 @@ for url in case_urls:
 
     print(f"\n{'=' * 20} KONIEC SPRAWY {'=' * 20}\n")
 
+""" MINI LM"""
+# print('Wyłącz sieć')
+# time.sleep(20)
+# Forcing offline mode
+print("--- [SynLex] Rozpoczynanie ładowania komponentów offline... ---")
 
+try:
+    # Model loading
+    if os.path.exists(MODEL_PATH):
+        GLOBAL_MODEL = SentenceTransformer(MODEL_PATH, device='cpu') # Path to the folder, we avoid SSL/503 errors
+        print("✅ Model semantyczny załadowany z dysku.")
+    else:
+        raise FileNotFoundError(f"Nie znaleziono folderu modelu w: {MODEL_PATH}")
+
+    # Loading faiss index
+    if os.path.exists(INDEX_FILE):
+        GLOBAL_FAISS_INDEX = faiss.read_index(INDEX_FILE)
+        print("✅ Indeks FAISS załadowany.")
+    else:
+        print("⚠️ Ostrzeżenie: Brak pliku indeksu .bin.")
+
+    # 3. Loading mapping (file names)
+    if os.path.exists(MAPPING_FILE):
+        GLOBAL_MAPPING_IDS = np.load(MAPPING_FILE)
+        print("✅ Mapowanie plików załadowane.")
+    else:
+        print("⚠️ Ostrzeżenie: Brak pliku mapowania .npy.")
+
+    print("🚀 [SynLex] System gotowy do pracy.")
+
+except Exception as e: # This block will catch an error if, for example, the MODEL_PATH folder does not exist or the
+                        # files inside are corrupted.
+    print(f"❌ [SynLex] BŁĄD KRYTYCZNY podczas startu: {e}")
+    exit()
+
+
+def get_reader():
+    """Initializes the EasyOCR reader only if needed."""
+    global EASYOCR_READER
+    if EASYOCR_READER is None:
+        print("⏳ Inicjalizacja EasyOCR (pobieranie modeli językowych przy pierwszym uruchomieniu)...")
+        EASYOCR_READER = easyocr.Reader(['pl', 'en'], gpu=False) # gpu=False is safer if you don't have a graphics card
+    return EASYOCR_READER
+
+
+def create_semantic_index(pdf_folder):
+    global GLOBAL_MODEL
+
+    documents_text = []
+    document_ids = []
+
+    print(f"📄 Przeszukiwanie folderu: {pdf_folder}")
+
+    for file_name in os.listdir(pdf_folder):
+        if file_name.endswith('.pdf'):
+            path = os.path.join(pdf_folder, file_name)
+            try:
+                full_pdf_text = ""
+                with fitz.open(path) as doc:
+                    for page in doc:
+                        # Normal reading attempt
+                        text = page.get_text().strip()
+
+                        # Use EasyOCR if page is blank (scan)
+                        if len(text) < 50:
+                            print(f"🔍 Plik {file_name} (str. {page.number + 1}) to skan. Uruchamiam EasyOCR...")
+
+                            # Rendering to an in-memory image
+                            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                            img_bytes = pix.tobytes("png")
+
+                            # Reading text via EasyOCR
+                            reader = get_reader()
+                            ocr_results = reader.readtext(img_bytes, detail=0)
+                            text = " ".join(ocr_results)
+
+                        full_pdf_text += text + "\n"
+                        # Saves the text to the "output_text" folder for your viewing.
+                        # with open(f"output_text/{file_name}.txt", "w", encoding="utf-8") as f:
+                        #     f.write(full_pdf_text)
+
+
+                if full_pdf_text.strip():
+                    documents_text.append(full_pdf_text)
+                    document_ids.append(file_name)
+                    print(f"✅ Przetworzono: {file_name}")
+                else:
+                    print(f"⚠️ Pominięto: {file_name} (całkowicie pusty)")
+
+            except Exception as e:
+                print(f"❌ Błąd przy {file_name}: {e}")
+
+    if not documents_text:
+        print("⚠ Nie znaleziono żadnego tekstu. Indeks nie zostanie stworzony.")
+        return
+
+    # Embedding and FAISS
+    print(f"🧠 Generowanie wektorów dla {len(documents_text)} dokumentów...")
+    embeddings = GLOBAL_MODEL.encode(documents_text, show_progress_bar=True)
+    embeddings = np.array(embeddings).astype('float32')
+
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(embeddings)
+
+    # Saving (renaming files to your variables)
+    faiss.write_index(index, 'faiss_index.bin')
+    np.save('faiss_mapping_ids.npy', np.array(document_ids))
+    print(f"🚀 Gotowe! Baza zawiera {index.ntotal} dokumentów.")
+
+create_semantic_index(DOWNLOAD_DIR)
 """
     ctx = ClientContext(site_url).with_credentials(UserCredential(SECRET_LOGIN, SECRET_PASSWORD))
     def send_to_sharepoint(data_dict):
@@ -519,5 +670,3 @@ for url in case_urls:
         except Exception as e:
             print(f"❌ Błąd SharePoint: {e}")
 """
-time.sleep(5)
-time.sleep(10)
