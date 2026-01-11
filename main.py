@@ -83,8 +83,7 @@ driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () =>
 
 def clean_download_directory(directory_path):
     """
-    Usuwa całą zawartość wskazanego folderu (pliki i podfoldery).
-    Sam folder zostaje zachowany.
+    Deletes all contents of the specified folder (files and subfolders). The folder itself is preserved.
     """
     if not os.path.exists(directory_path):
         print(f"📂 Folder {directory_path} nie istnieje. Tworzę go...")
@@ -96,11 +95,9 @@ def clean_download_directory(directory_path):
     for filename in os.listdir(directory_path):
         file_path = os.path.join(directory_path, filename)
         try:
-            # Sprawdź czy to plik lub link symboliczny i usuń
-            if os.path.isfile(file_path) or os.path.islink(file_path):
+            if os.path.isfile(file_path) or os.path.islink(file_path): # Check if it is a file or symbolic link and remove it.
                 os.unlink(file_path)
-            # Jeśli to folder, usuń go wraz z zawartością
-            elif os.path.isdir(file_path):
+            elif os.path.isdir(file_path): # If it is a folder, delete it and its contents.
                 shutil.rmtree(file_path)
         except Exception as e:
             print(f"⚠️ Nie udało się usunąć {file_path}. Powód: {e}")
