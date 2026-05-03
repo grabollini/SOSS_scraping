@@ -9,3 +9,10 @@ venv/
 # Pliki tymczasowe Pythona
 __pycache__/
 *.py[cod]
+
+wyniki_scrapingu.json
+*.bin
+*.npy
+SeleniumProfile/
+__pycache__/
+.idea/

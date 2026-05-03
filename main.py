@@ -12,8 +12,10 @@ import comtypes.client
 from PIL import Image
 from dotenv import load_dotenv
 from selenium import webdriver
+from selenium.common.exceptions import SessionNotCreatedException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -34,6 +36,7 @@ INDEX_FILE = 'faiss_index.bin'
 MAPPING_FILE = 'faiss_mapping_ids.npy'
 EASYOCR_READER = None
 reader = easyocr.Reader(['pl', 'en'], gpu=False)
+json_file_path = os.path.join(DOWNLOAD_DIR, "wszystkie_sprawy.json")
 
 GLOBAL_MODEL = None
 GLOBAL_FAISS_INDEX = None
@@ -70,10 +73,11 @@ chrome_options.add_experimental_option("detach", True) # Selenium don't close th
 chrome_options.add_argument("--disable-session-crashed-bubble")
 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])# disabling the toolbar "Chrome is controlled by automatic software"
 chrome_options.add_experimental_option('useAutomationExtension', False) # blocks the automation extension
-chrome_options.add_argument("--headless=new")  # Enable headless mode
+# chrome_options.add_argument("--headless=new")  # Enable headless mode
 chrome_options.add_experimental_option("prefs", prefs)
 
-service = Service(DRIVER_PATH)
+
+service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 url = os.getenv('SOSS_URL')
 driver.get(url)
@@ -180,8 +184,17 @@ def process_file_to_pdf(file_path):
         print(f"❌ Błąd konwersji pliku {ext}: {e}")
         return file_path
 
+clean_download_directory(DOWNLOAD_DIR)
 
 """START OF LOGINING"""
+
+try:
+    WebDriverWait(driver, 2).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, ".cky-btn.cky-btn-accept"))
+    ).click()
+    print("Cookies zaakceptowane.")
+except:
+    print("Baner cookies nie pojawił się lub został już zamknięty.")
 
 try:
     WebDriverWait(driver, 10).until(
@@ -190,10 +203,9 @@ try:
 except:
     print("Nie znaleziono elementu w czasie oczekiwania.")
 
-time.sleep(2)
-# driver.find_element(By.CSS_SELECTOR, ".cky-btn.cky-btn-accept").click()
 driver.find_element(By.XPATH, '//*[@id="signInName"]').send_keys('karol.grabiec@ergohestia.pl')
 driver.find_element(By.ID, 'continue').click()
+
 try:
     login_input = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.ID, "i0116")))
@@ -257,7 +269,6 @@ except:
 
 
 while start_datetime <= end_datetime:
-    clean_download_directory(DOWNLOAD_DIR)
     data_str = start_datetime.strftime('%Y-%m-%d')
     # load received dates
     if os.path.exists(STATE_FILE):
@@ -546,6 +557,9 @@ for url in case_urls:
 
     print(f"\n{'=' * 20} KONIEC SPRAWY {'=' * 20}\n")
 
+with open(json_file_path, "w", encoding="utf-8") as f:
+    json.dump(all_cases, f, ensure_ascii=False, indent=4)
+
 """ MINI LM"""
 # print('Wyłącz sieć')
 # time.sleep(20)
@@ -643,18 +657,18 @@ def create_semantic_index(pdf_folder):
         return
 
     # Embedding and FAISS
-    print(f"🧠 Generowanie wektorów dla {len(documents_text)} dokumentów...")
-    embeddings = GLOBAL_MODEL.encode(documents_text, show_progress_bar=True)
-    embeddings = np.array(embeddings).astype('float32')
-
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
-    index.add(embeddings)
+    # print(f"🧠 Generowanie wektorów dla {len(documents_text)} dokumentów...")
+    # embeddings = GLOBAL_MODEL.encode(documents_text, show_progress_bar=True)
+    # embeddings = np.array(embeddings).astype('float32')
+    #
+    # dimension = embeddings.shape[1]
+    # index = faiss.IndexFlatL2(dimension)
+    # index.add(embeddings)
 
     # Saving (renaming files to your variables)
-    faiss.write_index(index, 'faiss_index.bin')
-    np.save('faiss_mapping_ids.npy', np.array(document_ids))
-    print(f"🚀 Gotowe! Baza zawiera {index.ntotal} dokumentów.")
+    # faiss.write_index(index, 'faiss_index.bin')
+    # np.save('faiss_mapping_ids.npy', np.array(document_ids))
+    # print(f"🚀 Gotowe! Baza zawiera {index.ntotal} dokumentów.")
 
 create_semantic_index(DOWNLOAD_DIR)
 """
